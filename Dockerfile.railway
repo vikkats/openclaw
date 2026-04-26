@@ -1,0 +1,29 @@
+FROM node:24-bookworm-slim AS build
+
+WORKDIR /app
+
+RUN corepack enable
+
+COPY package.json pnpm-lock.yaml* ./
+RUN if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; else pnpm install; fi
+
+COPY . .
+RUN pnpm build && pnpm ui:build
+
+FROM node:24-bookworm-slim AS runtime
+
+ENV NODE_ENV=production
+ENV HOME=/data
+ENV OPENCLAW_HOME=/data/.openclaw
+ENV OPENCLAW_CONFIG_PATH=/data/.openclaw/openclaw.json
+
+WORKDIR /app
+RUN corepack enable
+
+COPY --from=build /app /app
+
+RUN mkdir -p /data/.openclaw/workspace /data/backups/qdrant
+
+EXPOSE 18789
+
+CMD ["node", "scripts/ares-railway-start.mjs"]
