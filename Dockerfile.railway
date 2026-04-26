@@ -4,14 +4,11 @@ WORKDIR /app
 
 RUN corepack enable
 
-# Install dependency metadata first for Docker layer caching.
-# pnpm-lock.yaml references patch files, so the patches directory must exist
-# before `pnpm install --frozen-lockfile` runs.
-COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml* ./
-COPY patches ./patches
-RUN if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; else pnpm install; fi
-
+# Copy the full repository before installing. OpenClaw's pnpm lockfile uses
+# patched dependencies and workspace/package metadata that may live outside the
+# root package files, so a partial Docker cache layer can miss required inputs.
 COPY . .
+RUN if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; else pnpm install; fi
 RUN pnpm build && pnpm ui:build
 
 FROM node:24-bookworm-slim AS runtime
