@@ -27,4 +27,4 @@ RUN mkdir -p /data/.openclaw/workspace /data/backups/qdrant
 
 EXPOSE 18789
 
-CMD ["node", "scripts/ares-railway-start.mjs"]
+CMD ["node", "scripts/ares-railway-start-wrapper.mjs"]
