@@ -69,7 +69,6 @@ if (!fs.existsSync(configPath)) {
 
   const config = {
     gateway: {
-      host: gatewayHost,
       port: gatewayPort,
       auth: { token: gatewayToken },
       reload: { mode: 'hybrid', debounceMs: 300 },
@@ -137,6 +136,19 @@ if (!fs.existsSync(configPath)) {
   console.log(`[ares-railway] using existing config: ${configPath}`);
 }
 
+// Migrate: remove unrecognized gateway.host key from existing configs
+try {
+  const raw = fs.readFileSync(configPath, 'utf8');
+  const cfg = JSON.parse(raw);
+  if (cfg.gateway && 'host' in cfg.gateway) {
+    delete cfg.gateway.host;
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2));
+    console.log('[ares-railway] migrated config: removed gateway.host');
+  }
+} catch (e) {
+  console.error('[ares-railway] config migration failed:', e.message);
+}
+
 console.log('[ares-railway] starting gateway', {
   configPath,
   workspace,
@@ -146,7 +158,7 @@ console.log('[ares-railway] starting gateway', {
   qdrantUrl: optionalEnv('QDRANT_URL', 'unset'),
 });
 
-const child = spawn('node', ['openclaw.mjs', 'gateway', '--host', gatewayHost, '--port', String(gatewayPort), '--verbose'], {
+const child = spawn('node', ['openclaw.mjs', 'gateway', '--port', String(gatewayPort), '--verbose'], {
   stdio: 'inherit',
   env: {
     ...process.env,
