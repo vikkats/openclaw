@@ -48,6 +48,18 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
       cfg.channels.telegram.configWrites = false;
       cfg.channels.telegram.dmPolicy = process.env.TELEGRAM_DM_POLICY || cfg.channels.telegram.dmPolicy || 'allowlist';
       cfg.channels.telegram.groupPolicy = cfg.channels.telegram.groupPolicy || 'allowlist';
+      cfg.channels.telegram.streaming = 'off';
+      cfg.channels.telegram.replyToMode = 'off';
+      cfg.channels.telegram.linkPreview = false;
+      cfg.channels.telegram.textChunkLimit = Number(process.env.TELEGRAM_TEXT_CHUNK_LIMIT || 4000);
+      cfg.channels.telegram.chunkMode = 'length';
+      cfg.channels.telegram.retry = {
+        ...(cfg.channels.telegram.retry || {}),
+        attempts: Number(process.env.TELEGRAM_RETRY_ATTEMPTS || 2),
+        minDelayMs: Number(process.env.TELEGRAM_RETRY_MIN_DELAY_MS || 500),
+        maxDelayMs: Number(process.env.TELEGRAM_RETRY_MAX_DELAY_MS || 5000),
+        jitter: 0.1,
+      };
     }
     cfg.browser = {
       ...(cfg.browser || {}),
@@ -64,7 +76,7 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
     if (fs.existsSync(configPath)) {
       const cfg = secureConfig(JSON.parse(fs.readFileSync(configPath, 'utf8')));
       fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2));
-      console.log(`[ares-railway-port-fix] secured config: port=${railwayPort}, bind=lan, auth=token, mdns=off, hooks=off`);
+      console.log(`[ares-railway-port-fix] secured config: port=${railwayPort}, bind=lan, auth=token, mdns=off, hooks=off, telegramStreaming=off`);
     }
   } catch (e) {
     console.error('[ares-railway-port-fix] persisted config patch failed:', e.message);
@@ -85,6 +97,10 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
   code = code.replace(
     "reload: { mode: 'hybrid', debounceMs: 300 },\n    },",
     "reload: { mode: 'hybrid', debounceMs: 300 },\n    },\n    discovery: { mdns: { mode: 'off' } },\n    hooks: { enabled: false },"
+  );
+  code = code.replace(
+    "botToken: '${TELEGRAM_BOT_TOKEN}',\n        dmPolicy:",
+    "botToken: '${TELEGRAM_BOT_TOKEN}',\n        streaming: 'off',\n        replyToMode: 'off',\n        linkPreview: false,\n        dmPolicy:"
   );
   code = code.replace(
     "const child = spawn('node', ['openclaw.mjs', 'gateway', '--port', String(gatewayPort), '--verbose'],",
