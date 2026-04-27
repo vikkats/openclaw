@@ -69,6 +69,7 @@ if (!fs.existsSync(configPath)) {
 
   const config = {
     gateway: {
+      mode: 'local',
       port: gatewayPort,
       auth: { token: gatewayToken },
       reload: { mode: 'hybrid', debounceMs: 300 },
@@ -136,14 +137,23 @@ if (!fs.existsSync(configPath)) {
   console.log(`[ares-railway] using existing config: ${configPath}`);
 }
 
-// Migrate: remove unrecognized gateway.host key from existing configs
+// Migrate: remove unrecognized gateway.host key and ensure gateway.mode exists
 try {
   const raw = fs.readFileSync(configPath, 'utf8');
   const cfg = JSON.parse(raw);
+  let changed = false;
   if (cfg.gateway && 'host' in cfg.gateway) {
     delete cfg.gateway.host;
-    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2));
+    changed = true;
     console.log('[ares-railway] migrated config: removed gateway.host');
+  }
+  if (cfg.gateway && !('mode' in cfg.gateway)) {
+    cfg.gateway.mode = 'local';
+    changed = true;
+    console.log('[ares-railway] migrated config: added gateway.mode=local');
+  }
+  if (changed) {
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2));
   }
 } catch (e) {
   console.error('[ares-railway] config migration failed:', e.message);
