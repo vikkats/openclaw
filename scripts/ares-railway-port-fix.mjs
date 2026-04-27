@@ -11,6 +11,11 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
   const railwayPort = Number(process.env.PORT || process.env.OPENCLAW_GATEWAY_PORT || 18789);
   const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN || '';
 
+  function optionalEnv(name, fallback = undefined) {
+    const value = process.env[name];
+    return value && value.trim() !== '' ? value : fallback;
+  }
+
   function assertStrongGatewayToken() {
     const weakExamples = new Set(['change-me-long-random-token', 'password', 'openclaw', 'changeme', '123456']);
     if (!gatewayToken || gatewayToken.length < 32 || weakExamples.has(gatewayToken)) {
@@ -18,8 +23,52 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
     }
   }
 
+  function applyRuntimeModelConfig(cfg) {
+    const modelId = optionalEnv('NANO_GPT_MODEL', 'kimi-k2.5');
+    const providerId = optionalEnv('NANO_GPT_PROVIDER_ID', 'nanogpt');
+    const modelRef = `${providerId}/${modelId}`;
+    const baseUrl = optionalEnv('NANO_GPT_BASE_URL', 'https://nano-gpt.com/api/v1');
+    const contextTokens = Number(optionalEnv('NANO_GPT_CONTEXT_TOKENS', '131072'));
+    const maxTokens = Number(optionalEnv('NANO_GPT_MAX_TOKENS', '8192'));
+
+    cfg.agents = cfg.agents || {};
+    cfg.agents.defaults = cfg.agents.defaults || {};
+    cfg.agents.defaults.model = { ...(cfg.agents.defaults.model || {}), primary: modelRef, fallbacks: [] };
+    cfg.agents.defaults.models = {
+      ...(cfg.agents.defaults.models || {}),
+      [modelRef]: { alias: `NanoGPT ${modelId}` },
+    };
+
+    cfg.models = cfg.models || {};
+    cfg.models.mode = 'merge';
+    cfg.models.providers = cfg.models.providers || {};
+    cfg.models.providers[providerId] = {
+      ...(cfg.models.providers[providerId] || {}),
+      baseUrl,
+      apiKey: '${NANOGPT_API_KEY}',
+      api: 'openai-completions',
+      models: [
+        {
+          id: modelId,
+          name: `NanoGPT ${modelId}`,
+          reasoning: /thinking|reason/i.test(modelId),
+          input: ['text', 'image'],
+          contextWindow: contextTokens,
+          contextTokens,
+          maxTokens,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          compat: { requiresStringContent: false, supportsDeveloperRole: false },
+        },
+      ],
+    };
+
+    console.log(`[ares-railway-port-fix] runtime model set to ${modelRef}`);
+    return cfg;
+  }
+
   function secureConfig(cfg) {
     assertStrongGatewayToken();
+    cfg = applyRuntimeModelConfig(cfg);
     cfg.gateway = cfg.gateway || {};
     if (Object.prototype.hasOwnProperty.call(cfg.gateway, 'host')) delete cfg.gateway.host;
     cfg.gateway.mode = 'local';
