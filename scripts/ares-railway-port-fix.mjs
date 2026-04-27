@@ -3,6 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+if (process.env.ARES_UPLOAD_MODE === '1') {
+  console.log('[ares-railway-port-fix] ARES_UPLOAD_MODE=1, starting upload page instead of OpenClaw gateway');
+  await import('./ares-upload-server.mjs');
+  process.exit(0);
+}
+
 const configPath = process.env.OPENCLAW_CONFIG_PATH || '/data/.openclaw/openclaw.json';
 const railwayPort = Number(process.env.PORT || process.env.OPENCLAW_GATEWAY_PORT || 18789);
 const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN || '';
@@ -20,8 +26,6 @@ function secureConfig(cfg) {
   if (Object.prototype.hasOwnProperty.call(cfg.gateway, 'host')) delete cfg.gateway.host;
   cfg.gateway.mode = 'local';
   cfg.gateway.port = railwayPort;
-  // Railway needs a non-loopback bind so its proxy can reach the container.
-  // Do not expose this without gateway token auth.
   cfg.gateway.bind = 'lan';
   cfg.gateway.auth = cfg.gateway.auth || {};
   cfg.gateway.auth.mode = 'token';
@@ -33,12 +37,9 @@ function secureConfig(cfg) {
     lockoutMs: Number(process.env.OPENCLAW_AUTH_LOCKOUT_MS || 300000),
     exemptLoopback: true,
   };
-
   cfg.discovery = cfg.discovery || {};
   cfg.discovery.mdns = { ...(cfg.discovery.mdns || {}), mode: 'off' };
-
   cfg.hooks = { ...(cfg.hooks || {}), enabled: false };
-
   cfg.channels = cfg.channels || {};
   cfg.channels.defaults = {
     ...(cfg.channels.defaults || {}),
@@ -50,7 +51,6 @@ function secureConfig(cfg) {
     cfg.channels.telegram.dmPolicy = process.env.TELEGRAM_DM_POLICY || cfg.channels.telegram.dmPolicy || 'allowlist';
     cfg.channels.telegram.groupPolicy = cfg.channels.telegram.groupPolicy || 'allowlist';
   }
-
   cfg.browser = {
     ...(cfg.browser || {}),
     ssrfPolicy: {
@@ -76,7 +76,6 @@ try {
 const source = path.resolve('scripts/ares-railway-start.mjs');
 const patched = path.resolve('/tmp/ares-railway-start.port-fixed.mjs');
 let code = fs.readFileSync(source, 'utf8');
-
 code = code.replace(
   "const gatewayPort = Number(process.env.OPENCLAW_GATEWAY_PORT || process.env.PORT || 18789);",
   "const gatewayPort = Number(process.env.PORT || process.env.OPENCLAW_GATEWAY_PORT || 18789);"
@@ -93,6 +92,5 @@ code = code.replace(
   "const child = spawn('node', ['openclaw.mjs', 'gateway', '--port', String(gatewayPort), '--verbose'],",
   "const child = spawn('node', ['openclaw.mjs', 'gateway', '--port', String(process.env.PORT || gatewayPort), '--verbose'],"
 );
-
 fs.writeFileSync(patched, code);
 await import(pathToFileURL(patched).href);
