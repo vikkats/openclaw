@@ -5,8 +5,17 @@ import { pathToFileURL } from 'node:url';
 
 const configPath = process.env.OPENCLAW_CONFIG_PATH || '/data/.openclaw/openclaw.json';
 const railwayPort = Number(process.env.PORT || process.env.OPENCLAW_GATEWAY_PORT || 18789);
+const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN || '';
+
+function assertStrongGatewayToken() {
+  const weakExamples = new Set(['change-me-long-random-token', 'password', 'openclaw', 'changeme', '123456']);
+  if (!gatewayToken || gatewayToken.length < 32 || weakExamples.has(gatewayToken)) {
+    throw new Error('OPENCLAW_GATEWAY_TOKEN must be a unique random token with at least 32 characters. Update the Railway variable and redeploy.');
+  }
+}
 
 function secureConfig(cfg) {
+  assertStrongGatewayToken();
   cfg.gateway = cfg.gateway || {};
   if (Object.prototype.hasOwnProperty.call(cfg.gateway, 'host')) delete cfg.gateway.host;
   cfg.gateway.mode = 'local';
@@ -15,8 +24,8 @@ function secureConfig(cfg) {
   // Do not expose this without gateway token auth.
   cfg.gateway.bind = 'lan';
   cfg.gateway.auth = cfg.gateway.auth || {};
-  cfg.gateway.auth.mode = cfg.gateway.auth.mode || 'token';
-  cfg.gateway.auth.token = cfg.gateway.auth.token || '${OPENCLAW_GATEWAY_TOKEN}';
+  cfg.gateway.auth.mode = 'token';
+  cfg.gateway.auth.token = '${OPENCLAW_GATEWAY_TOKEN}';
   cfg.gateway.auth.rateLimit = {
     ...(cfg.gateway.auth.rateLimit || {}),
     maxAttempts: Number(process.env.OPENCLAW_AUTH_MAX_ATTEMPTS || 10),
@@ -61,6 +70,7 @@ try {
   }
 } catch (e) {
   console.error('[ares-railway-port-fix] persisted config patch failed:', e.message);
+  process.exit(1);
 }
 
 const source = path.resolve('scripts/ares-railway-start.mjs');
