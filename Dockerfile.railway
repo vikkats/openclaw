@@ -20,6 +20,9 @@ ENV OPENCLAW_CONFIG_PATH=/data/.openclaw/openclaw.json
 
 WORKDIR /app
 RUN corepack enable
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app /app
 
