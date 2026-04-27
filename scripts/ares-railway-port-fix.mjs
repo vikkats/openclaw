@@ -23,6 +23,21 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
     }
   }
 
+  function applyRuntimeEnvConfig(cfg) {
+    cfg.env = cfg.env || {};
+    for (const key of [
+      'NANOGPT_API_KEY',
+      'TELEGRAM_BOT_TOKEN',
+      'QDRANT_URL',
+      'QDRANT_API_KEY',
+      'OPENROUTER_API_KEY',
+    ]) {
+      if (process.env[key] && process.env[key].trim() !== '') cfg.env[key] = process.env[key];
+    }
+    console.log('[ares-railway-port-fix] refreshed runtime env keys: NANOGPT_API_KEY, TELEGRAM_BOT_TOKEN, QDRANT_URL, QDRANT_API_KEY, OPENROUTER_API_KEY');
+    return cfg;
+  }
+
   function applyRuntimeModelConfig(cfg) {
     const modelId = optionalEnv('NANO_GPT_MODEL', 'kimi-k2.5');
     const providerId = optionalEnv('NANO_GPT_PROVIDER_ID', 'nanogpt');
@@ -68,6 +83,7 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
 
   function secureConfig(cfg) {
     assertStrongGatewayToken();
+    cfg = applyRuntimeEnvConfig(cfg);
     cfg = applyRuntimeModelConfig(cfg);
     cfg.gateway = cfg.gateway || {};
     if (Object.prototype.hasOwnProperty.call(cfg.gateway, 'host')) delete cfg.gateway.host;
