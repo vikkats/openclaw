@@ -48,6 +48,42 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
     }
   }
 
+  function cleanObjectKeys(obj, keys) {
+    if (!obj || typeof obj !== 'object') return;
+    for (const key of keys) delete obj[key];
+  }
+
+  function sanitizeUnsupportedRuntimeKeys(cfg) {
+    const staleModelKeys = [
+      'temperature',
+      'topP',
+      'top_p',
+      'frequencyPenalty',
+      'frequency_penalty',
+      'presencePenalty',
+      'presence_penalty',
+      'max_tokens',
+    ];
+
+    if (cfg?.agents?.defaults) {
+      delete cfg.agents.defaults.generation;
+    }
+    if (cfg?.models) {
+      delete cfg.models.defaults;
+    }
+
+    const providers = cfg?.models?.providers || {};
+    for (const provider of Object.values(providers)) {
+      if (!provider || typeof provider !== 'object') continue;
+      if (Array.isArray(provider.models)) {
+        for (const model of provider.models) cleanObjectKeys(model, staleModelKeys);
+      }
+    }
+
+    console.log('[ares-railway-port-fix] cleaned stale unsupported config keys from persisted config');
+    return cfg;
+  }
+
   function applyRuntimeEnvConfig(cfg) {
     cfg.env = cfg.env || {};
     for (const key of [
@@ -183,6 +219,7 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
 
   function secureConfig(cfg) {
     assertStrongGatewayToken();
+    cfg = sanitizeUnsupportedRuntimeKeys(cfg);
     cfg = applyRuntimeEnvConfig(cfg);
     cfg = applyRuntimeModelConfig(cfg);
     cfg.gateway = cfg.gateway || {};
