@@ -16,6 +16,24 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
     return value && value.trim() !== '' ? value : fallback;
   }
 
+  function splitCsv(value) {
+    return String(value || '')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  function dedupeById(models) {
+    const seen = new Set();
+    const out = [];
+    for (const model of models) {
+      if (!model?.id || seen.has(model.id)) continue;
+      seen.add(model.id);
+      out.push(model);
+    }
+    return out;
+  }
+
   function assertStrongGatewayToken() {
     const weakExamples = new Set(['change-me-long-random-token', 'password', 'openclaw', 'changeme', '123456']);
     if (!gatewayToken || gatewayToken.length < 32 || weakExamples.has(gatewayToken)) {
@@ -43,6 +61,7 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
     const modelId = optionalEnv('TEXT_MODEL', optionalEnv('OPENROUTER_MODEL', optionalEnv('NANO_GPT_MODEL', 'owl-alpha')));
     const imageProviderId = optionalEnv('IMAGE_PROVIDER_ID', optionalEnv('OPENCLAW_IMAGE_PROVIDER_ID', optionalEnv('NANO_GPT_PROVIDER_ID', 'nanogpt')));
     const imageModelId = optionalEnv('IMAGE_MODEL', optionalEnv('NANO_GPT_IMAGE_MODEL', 'qwen2.5-vl-72b-instruct'));
+    const nanoGptExtraModelIds = splitCsv(optionalEnv('NANO_GPT_EXTRA_MODELS', optionalEnv('NANO_GPT_THINKING_MODEL', 'qwen/qwen3.5-397b-a17b-thinking')));
     const modelRef = `${textProviderId}/${modelId}`;
     const imageModelRef = `${imageProviderId}/${imageModelId}`;
 
@@ -50,6 +69,20 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
     const nanoGptBaseUrl = optionalEnv('NANO_GPT_BASE_URL', 'https://nano-gpt.com/api/subscription/v1');
     const contextTokens = Number(optionalEnv('MODEL_CONTEXT_TOKENS', optionalEnv('NANO_GPT_CONTEXT_TOKENS', '131072')));
     const maxTokens = Number(optionalEnv('MODEL_MAX_TOKENS', optionalEnv('NANO_GPT_MAX_TOKENS', '8192')));
+
+    function modelEntry(providerId, id, input = ['text']) {
+      return {
+        id,
+        name: `${providerId} ${id}`,
+        reasoning: /thinking|reason|qwen3\.5/i.test(id),
+        input,
+        contextWindow: contextTokens,
+        contextTokens,
+        maxTokens,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        compat: { requiresStringContent: false, supportsDeveloperRole: false },
+      };
+    }
 
     cfg.agents = cfg.agents || {};
     cfg.agents.defaults = cfg.agents.defaults || {};
@@ -67,6 +100,7 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
       ...(cfg.agents.defaults.models || {}),
       [modelRef]: { alias: `${textProviderId} ${modelId}` },
       [imageModelRef]: { alias: `${imageProviderId} ${imageModelId}` },
+      ...Object.fromEntries(nanoGptExtraModelIds.map((id) => [`nanogpt/${id}`, { alias: `nanogpt ${id}` }])),
     };
 
     cfg.models = cfg.models || {};
@@ -78,56 +112,50 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
       baseUrl: textProviderId === 'openrouter' ? openRouterBaseUrl : nanoGptBaseUrl,
       apiKey: textProviderId === 'openrouter' ? '${OPENROUTER_API_KEY}' : '${NANOGPT_API_KEY}',
       api: 'openai-completions',
-      models: [
-        {
-          id: modelId,
-          name: `${textProviderId} ${modelId}`,
-          reasoning: /thinking|reason/i.test(modelId),
-          input: ['text'],
-          contextWindow: contextTokens,
-          contextTokens,
-          maxTokens,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          compat: { requiresStringContent: false, supportsDeveloperRole: false },
-        },
-      ],
+      models: [modelEntry(textProviderId, modelId, ['text'])],
     };
 
     const existingImageProvider = cfg.models.providers[imageProviderId] || {};
     const existingImageModels = Array.isArray(existingImageProvider.models) ? existingImageProvider.models : [];
-    const imageModelEntry = {
-      id: imageModelId,
-      name: `${imageProviderId} ${imageModelId}`,
-      reasoning: /thinking|reason/i.test(imageModelId),
-      input: ['text', 'image'],
-      contextWindow: contextTokens,
-      contextTokens,
-      maxTokens,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      compat: { requiresStringContent: false, supportsDeveloperRole: false },
-    };
+    const imageModelEntry = modelEntry(imageProviderId, imageModelId, ['text', 'image']);
 
     if (imageProviderId === textProviderId) {
-      const deduped = [
-        ...(cfg.models.providers[textProviderId].models || []).filter((model) => model.id !== imageModelId),
+      cfg.models.providers[textProviderId].models = dedupeById([
+        ...(cfg.models.providers[textProviderId].models || []),
         imageModelEntry,
-      ];
-      cfg.models.providers[textProviderId].models = deduped;
+      ]);
     } else {
       cfg.models.providers[imageProviderId] = {
         ...existingImageProvider,
         baseUrl: imageProviderId === 'openrouter' ? openRouterBaseUrl : nanoGptBaseUrl,
         apiKey: imageProviderId === 'openrouter' ? '${OPENROUTER_API_KEY}' : '${NANOGPT_API_KEY}',
         api: 'openai-completions',
-        models: [
-          ...existingImageModels.filter((model) => model.id !== imageModelId),
+        models: dedupeById([
+          ...existingImageModels,
           imageModelEntry,
-        ],
+        ]),
       };
     }
 
+    const nanoGptProvider = cfg.models.providers.nanogpt || {};
+    const existingNanoGptModels = Array.isArray(nanoGptProvider.models) ? nanoGptProvider.models : [];
+    cfg.models.providers.nanogpt = {
+      ...nanoGptProvider,
+      baseUrl: nanoGptBaseUrl,
+      apiKey: '${NANOGPT_API_KEY}',
+      api: 'openai-completions',
+      models: dedupeById([
+        ...existingNanoGptModels,
+        ...(imageProviderId === 'nanogpt' ? [imageModelEntry] : []),
+        ...nanoGptExtraModelIds.map((id) => modelEntry('nanogpt', id, ['text'])),
+      ]),
+    };
+
     console.log(`[ares-railway-port-fix] runtime model set to ${modelRef}`);
     console.log(`[ares-railway-port-fix] runtime image model set to ${imageModelRef}`);
+    if (nanoGptExtraModelIds.length) {
+      console.log(`[ares-railway-port-fix] extra NanoGPT models: ${nanoGptExtraModelIds.map((id) => `nanogpt/${id}`).join(', ')}`);
+    }
     return cfg;
   }
 
