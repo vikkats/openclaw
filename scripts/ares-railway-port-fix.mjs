@@ -16,6 +16,13 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
     return value && value.trim() !== '' ? value : fallback;
   }
 
+  function numberEnv(name, fallback = undefined) {
+    const value = optionalEnv(name, undefined);
+    if (value === undefined) return fallback;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
   function splitCsv(value) {
     return String(value || '')
       .split(',')
@@ -69,6 +76,15 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
     const nanoGptBaseUrl = optionalEnv('NANO_GPT_BASE_URL', 'https://nano-gpt.com/api/subscription/v1');
     const contextTokens = Number(optionalEnv('MODEL_CONTEXT_TOKENS', optionalEnv('NANO_GPT_CONTEXT_TOKENS', '131072')));
     const maxTokens = Number(optionalEnv('MODEL_MAX_TOKENS', optionalEnv('NANO_GPT_MAX_TOKENS', '8192')));
+    const generation = {
+      temperature: numberEnv('MODEL_TEMPERATURE', 0.85),
+      topP: numberEnv('MODEL_TOP_P', 0.95),
+      top_p: numberEnv('MODEL_TOP_P', 0.95),
+      frequencyPenalty: numberEnv('MODEL_FREQUENCY_PENALTY', 0.1),
+      frequency_penalty: numberEnv('MODEL_FREQUENCY_PENALTY', 0.1),
+      presencePenalty: numberEnv('MODEL_PRESENCE_PENALTY', 0.05),
+      presence_penalty: numberEnv('MODEL_PRESENCE_PENALTY', 0.05),
+    };
 
     function modelEntry(providerId, id, input = ['text']) {
       return {
@@ -79,6 +95,8 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
         contextWindow: contextTokens,
         contextTokens,
         maxTokens,
+        max_tokens: maxTokens,
+        ...generation,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         compat: { requiresStringContent: false, supportsDeveloperRole: false },
       };
@@ -96,6 +114,12 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
       primary: imageModelRef,
       fallbacks: [],
     };
+    cfg.agents.defaults.generation = {
+      ...(cfg.agents.defaults.generation || {}),
+      maxTokens,
+      max_tokens: maxTokens,
+      ...generation,
+    };
     cfg.agents.defaults.models = {
       ...(cfg.agents.defaults.models || {}),
       [modelRef]: { alias: `${textProviderId} ${modelId}` },
@@ -105,6 +129,12 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
 
     cfg.models = cfg.models || {};
     cfg.models.mode = 'merge';
+    cfg.models.defaults = {
+      ...(cfg.models.defaults || {}),
+      maxTokens,
+      max_tokens: maxTokens,
+      ...generation,
+    };
     cfg.models.providers = cfg.models.providers || {};
 
     cfg.models.providers[textProviderId] = {
@@ -153,6 +183,7 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
 
     console.log(`[ares-railway-port-fix] runtime model set to ${modelRef}`);
     console.log(`[ares-railway-port-fix] runtime image model set to ${imageModelRef}`);
+    console.log(`[ares-railway-port-fix] generation params: temperature=${generation.temperature}, topP=${generation.topP}, frequencyPenalty=${generation.frequencyPenalty}, presencePenalty=${generation.presencePenalty}, maxTokens=${maxTokens}`);
     if (nanoGptExtraModelIds.length) {
       console.log(`[ares-railway-port-fix] extra NanoGPT models: ${nanoGptExtraModelIds.map((id) => `nanogpt/${id}`).join(', ')}`);
     }
