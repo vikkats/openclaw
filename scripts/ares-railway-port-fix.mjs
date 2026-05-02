@@ -39,19 +39,31 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
   }
 
   function applyRuntimeModelConfig(cfg) {
-    const modelId = optionalEnv('NANO_GPT_MODEL', 'kimi-k2.5');
+    const modelId = optionalEnv('NANO_GPT_MODEL', 'owl-alpha');
+    const imageModelId = optionalEnv('NANO_GPT_IMAGE_MODEL', 'qwen2.5-vl-72b-instruct');
     const providerId = optionalEnv('NANO_GPT_PROVIDER_ID', 'nanogpt');
     const modelRef = `${providerId}/${modelId}`;
-    const baseUrl = optionalEnv('NANO_GPT_BASE_URL', 'https://nano-gpt.com/api/v1');
+    const imageModelRef = `${providerId}/${imageModelId}`;
+    const baseUrl = optionalEnv('NANO_GPT_BASE_URL', 'https://nano-gpt.com/api/subscription/v1');
     const contextTokens = Number(optionalEnv('NANO_GPT_CONTEXT_TOKENS', '131072'));
     const maxTokens = Number(optionalEnv('NANO_GPT_MAX_TOKENS', '8192'));
 
     cfg.agents = cfg.agents || {};
     cfg.agents.defaults = cfg.agents.defaults || {};
-    cfg.agents.defaults.model = { ...(cfg.agents.defaults.model || {}), primary: modelRef, fallbacks: [] };
+    cfg.agents.defaults.model = {
+      ...(cfg.agents.defaults.model || {}),
+      primary: modelRef,
+      fallbacks: [],
+    };
+    cfg.agents.defaults.imageModel = {
+      ...(cfg.agents.defaults.imageModel || {}),
+      primary: imageModelRef,
+      fallbacks: [],
+    };
     cfg.agents.defaults.models = {
       ...(cfg.agents.defaults.models || {}),
       [modelRef]: { alias: `NanoGPT ${modelId}` },
+      [imageModelRef]: { alias: `NanoGPT ${imageModelId}` },
     };
 
     cfg.models = cfg.models || {};
@@ -67,6 +79,17 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
           id: modelId,
           name: `NanoGPT ${modelId}`,
           reasoning: /thinking|reason/i.test(modelId),
+          input: ['text'],
+          contextWindow: contextTokens,
+          contextTokens,
+          maxTokens,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          compat: { requiresStringContent: false, supportsDeveloperRole: false },
+        },
+        {
+          id: imageModelId,
+          name: `NanoGPT ${imageModelId}`,
+          reasoning: /thinking|reason/i.test(imageModelId),
           input: ['text', 'image'],
           contextWindow: contextTokens,
           contextTokens,
@@ -78,6 +101,7 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
     };
 
     console.log(`[ares-railway-port-fix] runtime model set to ${modelRef}`);
+    console.log(`[ares-railway-port-fix] runtime image model set to ${imageModelRef}`);
     return cfg;
   }
 
