@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 const home = process.env.OPENCLAW_HOME || '/data/.openclaw';
 const workspace = process.env.OPENCLAW_WORKSPACE || path.join(home, 'workspace');
@@ -22,6 +22,12 @@ function optionalEnv(name, fallback = undefined) {
   return value && value.trim() !== '' ? value : fallback;
 }
 
+function boolEnv(name, fallback = false) {
+  const value = optionalEnv(name, undefined);
+  if (value === undefined) return fallback;
+  return /^(1|true|yes|on)$/i.test(String(value).trim());
+}
+
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
 }
@@ -37,12 +43,73 @@ function parseAllowFrom(raw) {
     .filter(Boolean);
 }
 
+function run(cmd, args, options = {}) {
+  return spawnSync(cmd, args, {
+    encoding: 'utf8',
+    stdio: options.stdio || 'pipe',
+    env: process.env,
+    ...options,
+  });
+}
+
+function commandExists(command) {
+  const result = run('sh', ['-lc', `command -v ${command}`]);
+  return result.status === 0 && result.stdout.trim() !== '';
+}
+
+function prependPath(dir) {
+  if (!dir) return;
+  const parts = String(process.env.PATH || '').split(':').filter(Boolean);
+  if (!parts.includes(dir)) {
+    process.env.PATH = `${dir}:${process.env.PATH || ''}`;
+  }
+}
+
+function ensureOpenClawCli() {
+  process.env.OPENCLAW_HOME = home;
+  process.env.OPENCLAW_WORKSPACE = workspace;
+  process.env.OPENCLAW_CONFIG_PATH = configPath;
+  process.env.HOME = process.env.HOME || '/data';
+
+  prependPath('/data/.npm-global/bin');
+  prependPath('/usr/local/bin');
+  prependPath('/usr/bin');
+
+  const npmPrefix = run('npm', ['prefix', '-g']);
+  if (npmPrefix.status === 0) prependPath(path.join(npmPrefix.stdout.trim(), 'bin'));
+
+  if (!commandExists('openclaw')) {
+    if (boolEnv('ARES_INSTALL_OPENCLAW_CLI', true)) {
+      console.log('[ares-railway] openclaw CLI missing; installing openclaw@latest globally');
+      const install = run('npm', ['install', '-g', 'openclaw@latest'], { stdio: 'inherit' });
+      if (install.status !== 0) {
+        console.warn(`[ares-railway] openclaw CLI install failed with status ${install.status}; gateway will still start`);
+      }
+    } else {
+      console.warn('[ares-railway] openclaw CLI missing and ARES_INSTALL_OPENCLAW_CLI=false');
+    }
+  }
+
+  if (commandExists('openclaw')) {
+    const which = run('sh', ['-lc', 'command -v openclaw']);
+    const version = run('openclaw', ['--version']);
+    console.log(`[ares-railway] openclaw CLI path: ${which.stdout.trim()}`);
+    console.log(`[ares-railway] openclaw CLI version: ${(version.stdout || version.stderr || '').trim()}`);
+  } else {
+    console.warn('[ares-railway] openclaw CLI still unavailable; native ClawHub/config/plugin commands may not work from agent sessions');
+  }
+}
+
 ensureDir(home);
 ensureDir(workspace);
 ensureDir(path.join(workspace, 'core_files'));
 ensureDir(path.join(workspace, 'memory'));
 ensureDir(path.join(workspace, 'diary'));
 ensureDir(path.join(workspace, 'memorized_diary'));
+ensureDir(path.join(workspace, 'skills'));
+ensureDir(path.join(workspace, '.agents', 'skills'));
+ensureDir(path.join(workspace, 'autonomy', 'skills'));
+ensureDir(path.join(workspace, 'autonomy', 'staging'));
 ensureDir('/data/backups/qdrant');
 
 writeIfMissing(path.join(workspace, 'SOUL.md'), '# SOUL.md\n\nAres core identity file. Replace this placeholder through the Railway shell or OpenClaw file tools.\n');
@@ -159,6 +226,8 @@ try {
   console.error('[ares-railway] config migration failed:', e.message);
 }
 
+ensureOpenClawCli();
+
 console.log('[ares-railway] starting gateway', {
   configPath,
   workspace,
@@ -173,7 +242,10 @@ const child = spawn('node', ['openclaw.mjs', 'gateway', '--port', String(gateway
   env: {
     ...process.env,
     HOME: '/data',
+    OPENCLAW_HOME: home,
+    OPENCLAW_WORKSPACE: workspace,
     OPENCLAW_CONFIG_PATH: configPath,
+    PATH: process.env.PATH,
   },
 });
 
