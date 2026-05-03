@@ -79,6 +79,9 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
     if (cfg?.models) {
       delete cfg.models.defaults;
     }
+    if (cfg?.browser?.ssrfPolicy) {
+      delete cfg.browser.ssrfPolicy.allowPrivateNetwork;
+    }
 
     const providers = cfg?.models?.providers || {};
     for (const provider of Object.values(providers)) {
@@ -364,7 +367,6 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
       ssrfPolicy: {
         ...((cfg.browser || {}).ssrfPolicy || {}),
         dangerouslyAllowPrivateNetwork: false,
-        allowPrivateNetwork: false,
       },
     };
     return cfg;
