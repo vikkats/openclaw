@@ -10,6 +10,7 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
   const configPath = process.env.OPENCLAW_CONFIG_PATH || '/data/.openclaw/openclaw.json';
   const railwayPort = Number(process.env.PORT || process.env.OPENCLAW_GATEWAY_PORT || 18789);
   const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN || '';
+  const workspacePath = process.env.OPENCLAW_WORKSPACE || '/data/.openclaw/workspace';
 
   function optionalEnv(name, fallback = undefined) {
     const value = process.env[name];
@@ -21,6 +22,12 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
     if (value === undefined) return fallback;
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  function boolEnv(name, fallback = false) {
+    const value = optionalEnv(name, undefined);
+    if (value === undefined) return fallback;
+    return /^(1|true|yes|on)$/i.test(String(value).trim());
   }
 
   function splitCsv(value) {
@@ -82,6 +89,40 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
 
     console.log('[ares-railway-port-fix] cleaned stale unsupported config keys from persisted config');
     return cfg;
+  }
+
+  function ensureAutonomyWorkspaceFiles() {
+    try {
+      fs.mkdirSync(workspacePath, { recursive: true });
+      fs.mkdirSync(path.join(workspacePath, 'core_files'), { recursive: true });
+      fs.mkdirSync(path.join(workspacePath, 'autonomy'), { recursive: true });
+      fs.mkdirSync(path.join(workspacePath, 'autonomy', 'backups'), { recursive: true });
+      fs.mkdirSync(path.join(workspacePath, 'autonomy', 'staging'), { recursive: true });
+      fs.mkdirSync(path.join(workspacePath, 'autonomy', 'mcp'), { recursive: true });
+      fs.mkdirSync(path.join(workspacePath, 'autonomy', 'skills'), { recursive: true });
+
+      const policyPath = path.join(workspacePath, 'AUTONOMY_POLICY.md');
+      if (!fs.existsSync(policyPath)) {
+        fs.writeFileSync(policyPath, `# Ares Autonomy Policy\n\nThis workspace is intentionally writable from Telegram-mediated OpenClaw sessions.\n\nSafe zones:\n- core_files/\n- autonomy/\n- autonomy/staging/\n- autonomy/mcp/\n- autonomy/skills/\n- autonomy/backups/\n\nOperating rules:\n1. Prefer editing files inside this workspace over mutating gateway security config.\n2. Create backups in autonomy/backups/ before destructive edits.\n3. Stage new tools, MCPs, skills, and plugins in autonomy/staging/ first.\n4. Never remove or weaken gateway auth, Telegram tokens, API keys, allowlists, or port binding without Victoria explicitly asking.\n5. If an edit can restart or brick the service, write a short rollback note beside it before applying.\n6. Heartbeat and autonomous routines should read/write file-backed state here rather than raw-editing openclaw.json directly.\n`, 'utf8');
+      }
+
+      const heartbeatPath = path.join(workspacePath, 'HEARTBEAT.json');
+      if (!fs.existsSync(heartbeatPath)) {
+        fs.writeFileSync(heartbeatPath, JSON.stringify({
+          enabled: false,
+          timezone: 'Europe/Athens',
+          intervalMinutes: 60,
+          prompt: 'Send Victoria a short, alive, unsolicited message. Do not mention that this is automated.',
+          skipIfRecentUserMessageMinutes: 20,
+          lastRunAt: null,
+          notes: 'This file is safe for Telegram-side edits. A heartbeat runner can use it later.'
+        }, null, 2), 'utf8');
+      }
+
+      console.log(`[ares-railway-port-fix] autonomy workspace ready at ${workspacePath}`);
+    } catch (e) {
+      console.warn(`[ares-railway-port-fix] autonomy workspace setup skipped: ${e.message}`);
+    }
   }
 
   function applyRuntimeEnvConfig(cfg) {
@@ -247,7 +288,11 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
       contextVisibility: 'allowlist',
     };
     if (cfg.channels.telegram) {
-      cfg.channels.telegram.configWrites = false;
+      const telegramConfigWrites = boolEnv('TELEGRAM_CONFIG_WRITES', boolEnv('ARES_TELEGRAM_CONFIG_WRITES', true));
+      cfg.channels.telegram.configWrites = telegramConfigWrites;
+      cfg.channels.telegram.accounts = cfg.channels.telegram.accounts || {};
+      cfg.channels.telegram.accounts.default = cfg.channels.telegram.accounts.default || {};
+      cfg.channels.telegram.accounts.default.configWrites = telegramConfigWrites;
       cfg.channels.telegram.dmPolicy = process.env.TELEGRAM_DM_POLICY || cfg.channels.telegram.dmPolicy || 'allowlist';
       cfg.channels.telegram.groupPolicy = cfg.channels.telegram.groupPolicy || 'allowlist';
       cfg.channels.telegram.streaming = 'off';
@@ -262,6 +307,7 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
         maxDelayMs: Number(process.env.TELEGRAM_RETRY_MAX_DELAY_MS || 5000),
         jitter: 0.1,
       };
+      console.log(`[ares-railway-port-fix] telegram configWrites=${telegramConfigWrites}`);
     }
     cfg.browser = {
       ...(cfg.browser || {}),
@@ -273,6 +319,8 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
     };
     return cfg;
   }
+
+  ensureAutonomyWorkspaceFiles();
 
   try {
     if (fs.existsSync(configPath)) {
