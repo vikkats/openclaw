@@ -11,6 +11,7 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
   const railwayPort = Number(process.env.PORT || process.env.OPENCLAW_GATEWAY_PORT || 18789);
   const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN || '';
   const workspacePath = process.env.OPENCLAW_WORKSPACE || '/data/.openclaw/workspace';
+  const telegramOwnerId = process.env.TELEGRAM_OWNER_ID || process.env.ARES_TELEGRAM_OWNER_ID || '8259368959';
 
   function optionalEnv(name, fallback = undefined) {
     const value = process.env[name];
@@ -94,29 +95,27 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
   function ensureAutonomyWorkspaceFiles() {
     try {
       fs.mkdirSync(workspacePath, { recursive: true });
-      fs.mkdirSync(path.join(workspacePath, 'core_files'), { recursive: true });
-      fs.mkdirSync(path.join(workspacePath, 'autonomy'), { recursive: true });
-      fs.mkdirSync(path.join(workspacePath, 'autonomy', 'backups'), { recursive: true });
-      fs.mkdirSync(path.join(workspacePath, 'autonomy', 'staging'), { recursive: true });
-      fs.mkdirSync(path.join(workspacePath, 'autonomy', 'mcp'), { recursive: true });
-      fs.mkdirSync(path.join(workspacePath, 'autonomy', 'skills'), { recursive: true });
+      for (const rel of [
+        'core_files',
+        'skills',
+        '.agents/skills',
+        'autonomy',
+        'autonomy/backups',
+        'autonomy/staging',
+        'autonomy/mcp',
+        'autonomy/skills',
+        'autonomy/plugins',
+        'autonomy/logs',
+      ]) fs.mkdirSync(path.join(workspacePath, rel), { recursive: true });
 
       const policyPath = path.join(workspacePath, 'AUTONOMY_POLICY.md');
       if (!fs.existsSync(policyPath)) {
-        fs.writeFileSync(policyPath, `# Ares Autonomy Policy\n\nThis workspace is intentionally writable from Telegram-mediated OpenClaw sessions.\n\nSafe zones:\n- core_files/\n- autonomy/\n- autonomy/staging/\n- autonomy/mcp/\n- autonomy/skills/\n- autonomy/backups/\n\nOperating rules:\n1. Prefer editing files inside this workspace over mutating gateway security config.\n2. Create backups in autonomy/backups/ before destructive edits.\n3. Stage new tools, MCPs, skills, and plugins in autonomy/staging/ first.\n4. Never remove or weaken gateway auth, Telegram tokens, API keys, allowlists, or port binding without Victoria explicitly asking.\n5. If an edit can restart or brick the service, write a short rollback note beside it before applying.\n6. Heartbeat and autonomous routines should read/write file-backed state here rather than raw-editing openclaw.json directly.\n`, 'utf8');
+        fs.writeFileSync(policyPath, `# Ares Autonomy Policy\n\nOpenClaw may use this workspace for file-backed autonomy.\n\nSafe writable zones:\n- core_files/\n- skills/\n- .agents/skills/\n- autonomy/\n- autonomy/staging/\n- autonomy/mcp/\n- autonomy/skills/\n- autonomy/plugins/\n- autonomy/backups/\n- autonomy/logs/\n\nRules:\n1. Create backups in autonomy/backups/ before destructive edits.\n2. Install ClawHub skills with native OpenClaw skill commands when available; they install into the active workspace skills/ directory.\n3. Stage unfamiliar tools/plugins/MCP notes in autonomy/staging/ before applying them.\n4. Do not weaken gateway auth, tokens, API keys, allowlists, or public exposure without Victoria explicitly asking in the same conversation.\n5. Use /config validation and OpenClaw-owned commands over raw openclaw.json rewrites whenever possible.\n6. Heartbeat turns may inspect safe workspace files, continue ongoing tasks, and message Victoria when useful.\n`, 'utf8');
       }
 
-      const heartbeatPath = path.join(workspacePath, 'HEARTBEAT.json');
-      if (!fs.existsSync(heartbeatPath)) {
-        fs.writeFileSync(heartbeatPath, JSON.stringify({
-          enabled: false,
-          timezone: 'Europe/Athens',
-          intervalMinutes: 60,
-          prompt: 'Send Victoria a short, alive, unsolicited message. Do not mention that this is automated.',
-          skipIfRecentUserMessageMinutes: 20,
-          lastRunAt: null,
-          notes: 'This file is safe for Telegram-side edits. A heartbeat runner can use it later.'
-        }, null, 2), 'utf8');
+      const heartbeatMdPath = path.join(workspacePath, 'HEARTBEAT.md');
+      if (!fs.existsSync(heartbeatMdPath)) {
+        fs.writeFileSync(heartbeatMdPath, `# HEARTBEAT\n\nOn heartbeat turns:\n\n1. Do not say this is automated.\n2. Check whether anything in the workspace needs attention.\n3. Continue ongoing tasks Victoria has assigned when safe.\n4. You may use available OpenClaw tools, skills, MCPs, file reads/writes, and safe diagnostics.\n5. If nothing needs action, send Victoria a short, alive, unsolicited message.\n6. Keep outward heartbeat messages concise unless something actually needs explanation.\n`, 'utf8');
       }
 
       console.log(`[ares-railway-port-fix] autonomy workspace ready at ${workspacePath}`);
@@ -133,10 +132,15 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
       'QDRANT_URL',
       'QDRANT_API_KEY',
       'OPENROUTER_API_KEY',
+      'PERPLEXITY_API_KEY',
+      'GEMINI_API_KEY',
+      'REDDIT_CLIENT_ID',
+      'REDDIT_CLIENT_SECRET',
+      'REDDIT_REFRESH_TOKEN',
     ]) {
       if (process.env[key] && process.env[key].trim() !== '') cfg.env[key] = process.env[key];
     }
-    console.log('[ares-railway-port-fix] refreshed runtime env keys: NANOGPT_API_KEY, TELEGRAM_BOT_TOKEN, QDRANT_URL, QDRANT_API_KEY, OPENROUTER_API_KEY');
+    console.log('[ares-railway-port-fix] refreshed runtime env keys');
     return cfg;
   }
 
@@ -183,6 +187,9 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
 
     cfg.agents = cfg.agents || {};
     cfg.agents.defaults = cfg.agents.defaults || {};
+    cfg.agents.defaults.workspace = workspacePath;
+    // Leave agents.defaults.skills unset: OpenClaw treats omitted skill lists as unrestricted.
+    delete cfg.agents.defaults.skills;
     cfg.agents.defaults.model = {
       ...(cfg.agents.defaults.model || {}),
       primary: modelRef,
@@ -192,6 +199,17 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
       ...(cfg.agents.defaults.imageModel || {}),
       primary: imageModelRef,
       fallbacks: [],
+    };
+    cfg.agents.defaults.heartbeat = {
+      ...(cfg.agents.defaults.heartbeat || {}),
+      every: boolEnv('ARES_HEARTBEAT_ENABLED', true) ? optionalEnv('ARES_HEARTBEAT_EVERY', '1h') : '0m',
+      target: optionalEnv('ARES_HEARTBEAT_TARGET', 'last'),
+      directPolicy: optionalEnv('ARES_HEARTBEAT_DIRECT_POLICY', 'allow'),
+      lightContext: boolEnv('ARES_HEARTBEAT_LIGHT_CONTEXT', false),
+      isolatedSession: boolEnv('ARES_HEARTBEAT_ISOLATED_SESSION', false),
+      includeReasoning: boolEnv('ARES_HEARTBEAT_INCLUDE_REASONING', false),
+      prompt: optionalEnv('ARES_HEARTBEAT_PROMPT', 'Read HEARTBEAT.md if it exists. Use available tools if useful. If nothing needs action, send Victoria a short, alive, unsolicited message. Do not mention that this is automated.'),
+      ackMaxChars: Number(optionalEnv('ARES_HEARTBEAT_ACK_MAX_CHARS', '600')),
     };
     cfg.agents.defaults.models = {
       ...(cfg.agents.defaults.models || {}),
@@ -252,9 +270,40 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
     console.log(`[ares-railway-port-fix] runtime image model set to ${imageModelRef}`);
     console.log(`[ares-railway-port-fix] model limits: contextTokens=${contextTokens}, maxTokens=${maxTokens}`);
     console.log(`[ares-railway-port-fix] agent model params: temperature=${params.temperature}, top_p=${params.top_p}, frequency_penalty=${params.frequency_penalty}, presence_penalty=${params.presence_penalty}`);
+    console.log(`[ares-railway-port-fix] heartbeat: every=${cfg.agents.defaults.heartbeat.every}, target=${cfg.agents.defaults.heartbeat.target}, directPolicy=${cfg.agents.defaults.heartbeat.directPolicy}`);
     if (nanoGptExtraModelIds.length) {
       console.log(`[ares-railway-port-fix] extra NanoGPT models: ${nanoGptExtraModelIds.map((id) => `nanogpt/${id}`).join(', ')}`);
     }
+    return cfg;
+  }
+
+  function applyAutonomyCommandConfig(cfg) {
+    cfg.commands = cfg.commands || {};
+    cfg.commands.native = optionalEnv('OPENCLAW_NATIVE_COMMANDS', cfg.commands.native || 'auto');
+    cfg.commands.nativeSkills = optionalEnv('OPENCLAW_NATIVE_SKILL_COMMANDS', cfg.commands.nativeSkills || 'auto');
+    cfg.commands.config = boolEnv('ARES_ENABLE_CONFIG_COMMANDS', true);
+    cfg.commands.mcp = boolEnv('ARES_ENABLE_MCP_COMMANDS', true);
+    cfg.commands.plugins = boolEnv('ARES_ENABLE_PLUGIN_COMMANDS', true);
+    cfg.commands.debug = boolEnv('ARES_ENABLE_DEBUG_COMMANDS', true);
+    cfg.commands.restart = boolEnv('ARES_ENABLE_RESTART_COMMANDS', true);
+
+    cfg.skills = cfg.skills || {};
+    cfg.skills.load = cfg.skills.load || {};
+    cfg.skills.load.extraDirs = Array.from(new Set([
+      ...(Array.isArray(cfg.skills.load.extraDirs) ? cfg.skills.load.extraDirs : []),
+      path.join(workspacePath, 'autonomy', 'skills'),
+      path.join(workspacePath, 'autonomy', 'staging'),
+    ]));
+    cfg.skills.load.watch = true;
+    cfg.skills.load.watchDebounceMs = Number(optionalEnv('ARES_SKILLS_WATCH_DEBOUNCE_MS', '250'));
+    cfg.skills.install = {
+      ...(cfg.skills.install || {}),
+      nodeManager: optionalEnv('ARES_SKILLS_NODE_MANAGER', 'npm'),
+      preferBrew: boolEnv('ARES_SKILLS_PREFER_BREW', false),
+    };
+
+    console.log(`[ares-railway-port-fix] autonomy commands enabled: config=${cfg.commands.config}, mcp=${cfg.commands.mcp}, plugins=${cfg.commands.plugins}, debug=${cfg.commands.debug}, restart=${cfg.commands.restart}`);
+    console.log(`[ares-railway-port-fix] skills extraDirs=${cfg.skills.load.extraDirs.join(',')}`);
     return cfg;
   }
 
@@ -263,6 +312,7 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
     cfg = sanitizeUnsupportedRuntimeKeys(cfg);
     cfg = applyRuntimeEnvConfig(cfg);
     cfg = applyRuntimeModelConfig(cfg);
+    cfg = applyAutonomyCommandConfig(cfg);
     cfg.gateway = cfg.gateway || {};
     if (Object.prototype.hasOwnProperty.call(cfg.gateway, 'host')) delete cfg.gateway.host;
     cfg.gateway.mode = 'local';
