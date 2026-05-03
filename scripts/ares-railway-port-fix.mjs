@@ -11,7 +11,6 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
   const railwayPort = Number(process.env.PORT || process.env.OPENCLAW_GATEWAY_PORT || 18789);
   const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN || '';
   const workspacePath = process.env.OPENCLAW_WORKSPACE || '/data/.openclaw/workspace';
-  const telegramOwnerId = process.env.TELEGRAM_OWNER_ID || process.env.ARES_TELEGRAM_OWNER_ID || '8259368959';
 
   function optionalEnv(name, fallback = undefined) {
     const value = process.env[name];
@@ -72,15 +71,25 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
       'presence_penalty',
       'max_tokens',
     ];
+    const staleTelegramKeys = [
+      'streamMode',
+      'chunkMode',
+      'blockStreaming',
+      'blockStreamingCoalesce',
+      'draftChunk',
+      'replyToMode',
+      'linkPreview',
+      'accounts',
+    ];
 
-    if (cfg?.agents?.defaults) {
-      delete cfg.agents.defaults.generation;
-    }
-    if (cfg?.models) {
-      delete cfg.models.defaults;
-    }
-    if (cfg?.browser?.ssrfPolicy) {
-      delete cfg.browser.ssrfPolicy.allowPrivateNetwork;
+    if (cfg?.agents?.defaults) delete cfg.agents.defaults.generation;
+    if (cfg?.models) delete cfg.models.defaults;
+    if (cfg?.browser?.ssrfPolicy) delete cfg.browser.ssrfPolicy.allowPrivateNetwork;
+    if (cfg?.channels?.telegram) {
+      for (const key of staleTelegramKeys) delete cfg.channels.telegram[key];
+      if (typeof cfg.channels.telegram.streaming !== 'object' || cfg.channels.telegram.streaming === null) {
+        delete cfg.channels.telegram.streaming;
+      }
     }
 
     const providers = cfg?.models?.providers || {};
@@ -182,27 +191,15 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
     }
 
     function agentModelConfig(providerId, id) {
-      return {
-        alias: `${providerId} ${id}`,
-        params,
-      };
+      return { alias: `${providerId} ${id}`, params };
     }
 
     cfg.agents = cfg.agents || {};
     cfg.agents.defaults = cfg.agents.defaults || {};
     cfg.agents.defaults.workspace = workspacePath;
-    // Leave agents.defaults.skills unset: OpenClaw treats omitted skill lists as unrestricted.
     delete cfg.agents.defaults.skills;
-    cfg.agents.defaults.model = {
-      ...(cfg.agents.defaults.model || {}),
-      primary: modelRef,
-      fallbacks: [],
-    };
-    cfg.agents.defaults.imageModel = {
-      ...(cfg.agents.defaults.imageModel || {}),
-      primary: imageModelRef,
-      fallbacks: [],
-    };
+    cfg.agents.defaults.model = { ...(cfg.agents.defaults.model || {}), primary: modelRef, fallbacks: [] };
+    cfg.agents.defaults.imageModel = { ...(cfg.agents.defaults.imageModel || {}), primary: imageModelRef, fallbacks: [] };
     cfg.agents.defaults.heartbeat = {
       ...(cfg.agents.defaults.heartbeat || {}),
       every: boolEnv('ARES_HEARTBEAT_ENABLED', true) ? optionalEnv('ARES_HEARTBEAT_EVERY', '1h') : '0m',
@@ -224,7 +221,6 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
     cfg.models = cfg.models || {};
     cfg.models.mode = 'merge';
     cfg.models.providers = cfg.models.providers || {};
-
     cfg.models.providers[textProviderId] = {
       ...(cfg.models.providers[textProviderId] || {}),
       baseUrl: textProviderId === 'openrouter' ? openRouterBaseUrl : nanoGptBaseUrl,
@@ -236,22 +232,15 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
     const existingImageProvider = cfg.models.providers[imageProviderId] || {};
     const existingImageModels = Array.isArray(existingImageProvider.models) ? existingImageProvider.models : [];
     const imageModelEntry = modelEntry(imageProviderId, imageModelId, ['text', 'image']);
-
     if (imageProviderId === textProviderId) {
-      cfg.models.providers[textProviderId].models = dedupeById([
-        ...(cfg.models.providers[textProviderId].models || []),
-        imageModelEntry,
-      ]);
+      cfg.models.providers[textProviderId].models = dedupeById([...(cfg.models.providers[textProviderId].models || []), imageModelEntry]);
     } else {
       cfg.models.providers[imageProviderId] = {
         ...existingImageProvider,
         baseUrl: imageProviderId === 'openrouter' ? openRouterBaseUrl : nanoGptBaseUrl,
         apiKey: imageProviderId === 'openrouter' ? '${OPENROUTER_API_KEY}' : '${NANOGPT_API_KEY}',
         api: 'openai-completions',
-        models: dedupeById([
-          ...existingImageModels,
-          imageModelEntry,
-        ]),
+        models: dedupeById([...existingImageModels, imageModelEntry]),
       };
     }
 
@@ -262,11 +251,7 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
       baseUrl: nanoGptBaseUrl,
       apiKey: '${NANOGPT_API_KEY}',
       api: 'openai-completions',
-      models: dedupeById([
-        ...existingNanoGptModels,
-        ...(imageProviderId === 'nanogpt' ? [imageModelEntry] : []),
-        ...nanoGptExtraModelIds.map((id) => modelEntry('nanogpt', id, ['text'])),
-      ]),
+      models: dedupeById([...existingNanoGptModels, ...(imageProviderId === 'nanogpt' ? [imageModelEntry] : []), ...nanoGptExtraModelIds.map((id) => modelEntry('nanogpt', id, ['text']))]),
     };
 
     console.log(`[ares-railway-port-fix] runtime model set to ${modelRef}`);
@@ -274,9 +259,7 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
     console.log(`[ares-railway-port-fix] model limits: contextTokens=${contextTokens}, maxTokens=${maxTokens}`);
     console.log(`[ares-railway-port-fix] agent model params: temperature=${params.temperature}, top_p=${params.top_p}, frequency_penalty=${params.frequency_penalty}, presence_penalty=${params.presence_penalty}`);
     console.log(`[ares-railway-port-fix] heartbeat: every=${cfg.agents.defaults.heartbeat.every}, target=${cfg.agents.defaults.heartbeat.target}, directPolicy=${cfg.agents.defaults.heartbeat.directPolicy}`);
-    if (nanoGptExtraModelIds.length) {
-      console.log(`[ares-railway-port-fix] extra NanoGPT models: ${nanoGptExtraModelIds.map((id) => `nanogpt/${id}`).join(', ')}`);
-    }
+    if (nanoGptExtraModelIds.length) console.log(`[ares-railway-port-fix] extra NanoGPT models: ${nanoGptExtraModelIds.map((id) => `nanogpt/${id}`).join(', ')}`);
     return cfg;
   }
 
@@ -324,35 +307,25 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
     cfg.gateway.auth = cfg.gateway.auth || {};
     cfg.gateway.auth.mode = 'token';
     cfg.gateway.auth.token = '${OPENCLAW_GATEWAY_TOKEN}';
-    cfg.gateway.auth.rateLimit = {
-      ...(cfg.gateway.auth.rateLimit || {}),
-      maxAttempts: Number(process.env.OPENCLAW_AUTH_MAX_ATTEMPTS || 10),
-      windowMs: Number(process.env.OPENCLAW_AUTH_WINDOW_MS || 60000),
-      lockoutMs: Number(process.env.OPENCLAW_AUTH_LOCKOUT_MS || 300000),
-      exemptLoopback: true,
-    };
+    cfg.gateway.auth.rateLimit = { ...(cfg.gateway.auth.rateLimit || {}), maxAttempts: Number(process.env.OPENCLAW_AUTH_MAX_ATTEMPTS || 10), windowMs: Number(process.env.OPENCLAW_AUTH_WINDOW_MS || 60000), lockoutMs: Number(process.env.OPENCLAW_AUTH_LOCKOUT_MS || 300000), exemptLoopback: true };
     cfg.discovery = cfg.discovery || {};
     cfg.discovery.mdns = { ...(cfg.discovery.mdns || {}), mode: 'off' };
     cfg.hooks = { ...(cfg.hooks || {}), enabled: false };
     cfg.channels = cfg.channels || {};
-    cfg.channels.defaults = {
-      ...(cfg.channels.defaults || {}),
-      groupPolicy: 'allowlist',
-      contextVisibility: 'allowlist',
-    };
+    cfg.channels.defaults = { ...(cfg.channels.defaults || {}), groupPolicy: 'allowlist', contextVisibility: 'allowlist' };
     if (cfg.channels.telegram) {
       const telegramConfigWrites = boolEnv('TELEGRAM_CONFIG_WRITES', boolEnv('ARES_TELEGRAM_CONFIG_WRITES', true));
       cfg.channels.telegram.configWrites = telegramConfigWrites;
-      cfg.channels.telegram.accounts = cfg.channels.telegram.accounts || {};
-      cfg.channels.telegram.accounts.default = cfg.channels.telegram.accounts.default || {};
-      cfg.channels.telegram.accounts.default.configWrites = telegramConfigWrites;
       cfg.channels.telegram.dmPolicy = process.env.TELEGRAM_DM_POLICY || cfg.channels.telegram.dmPolicy || 'allowlist';
       cfg.channels.telegram.groupPolicy = cfg.channels.telegram.groupPolicy || 'allowlist';
-      cfg.channels.telegram.streaming = 'off';
-      cfg.channels.telegram.replyToMode = 'off';
-      cfg.channels.telegram.linkPreview = false;
+      cfg.channels.telegram.streaming = {
+        ...(typeof cfg.channels.telegram.streaming === 'object' && cfg.channels.telegram.streaming ? cfg.channels.telegram.streaming : {}),
+        mode: 'off',
+        chunkMode: 'length',
+        preview: { ...(cfg.channels.telegram.streaming?.preview || {}), chunk: false },
+        block: { ...(cfg.channels.telegram.streaming?.block || {}), enabled: false, coalesce: false },
+      };
       cfg.channels.telegram.textChunkLimit = Number(process.env.TELEGRAM_TEXT_CHUNK_LIMIT || 4000);
-      cfg.channels.telegram.chunkMode = 'length';
       cfg.channels.telegram.retry = {
         ...(cfg.channels.telegram.retry || {}),
         attempts: Number(process.env.TELEGRAM_RETRY_ATTEMPTS || 2),
@@ -360,15 +333,9 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
         maxDelayMs: Number(process.env.TELEGRAM_RETRY_MAX_DELAY_MS || 5000),
         jitter: 0.1,
       };
-      console.log(`[ares-railway-port-fix] telegram configWrites=${telegramConfigWrites}`);
+      console.log(`[ares-railway-port-fix] telegram configWrites=${telegramConfigWrites}, streaming.mode=off`);
     }
-    cfg.browser = {
-      ...(cfg.browser || {}),
-      ssrfPolicy: {
-        ...((cfg.browser || {}).ssrfPolicy || {}),
-        dangerouslyAllowPrivateNetwork: false,
-      },
-    };
+    cfg.browser = { ...(cfg.browser || {}), ssrfPolicy: { ...((cfg.browser || {}).ssrfPolicy || {}), dangerouslyAllowPrivateNetwork: false } };
     return cfg;
   }
 
@@ -388,26 +355,11 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
   const source = path.resolve('scripts/ares-railway-start.mjs');
   const patched = path.resolve('/tmp/ares-railway-start.port-fixed.mjs');
   let code = fs.readFileSync(source, 'utf8');
-  code = code.replace(
-    "const gatewayPort = Number(process.env.OPENCLAW_GATEWAY_PORT || process.env.PORT || 18789);",
-    "const gatewayPort = Number(process.env.PORT || process.env.OPENCLAW_GATEWAY_PORT || 18789);"
-  );
-  code = code.replace(
-    "port: gatewayPort,\n      auth:",
-    "port: gatewayPort,\n      bind: 'lan',\n      auth:"
-  );
-  code = code.replace(
-    "reload: { mode: 'hybrid', debounceMs: 300 },\n    },",
-    "reload: { mode: 'hybrid', debounceMs: 300 },\n    },\n    discovery: { mdns: { mode: 'off' } },\n    hooks: { enabled: false },"
-  );
-  code = code.replace(
-    "botToken: '${TELEGRAM_BOT_TOKEN}',\n        dmPolicy:",
-    "botToken: '${TELEGRAM_BOT_TOKEN}',\n        streaming: 'off',\n        replyToMode: 'off',\n        linkPreview: false,\n        dmPolicy:"
-  );
-  code = code.replace(
-    "const child = spawn('node', ['openclaw.mjs', 'gateway', '--port', String(gatewayPort), '--verbose'],",
-    "const child = spawn('node', ['openclaw.mjs', 'gateway', '--port', String(process.env.PORT || gatewayPort), '--verbose'],"
-  );
+  code = code.replace("const gatewayPort = Number(process.env.OPENCLAW_GATEWAY_PORT || process.env.PORT || 18789);", "const gatewayPort = Number(process.env.PORT || process.env.OPENCLAW_GATEWAY_PORT || 18789);");
+  code = code.replace("port: gatewayPort,\n      auth:", "port: gatewayPort,\n      bind: 'lan',\n      auth:");
+  code = code.replace("reload: { mode: 'hybrid', debounceMs: 300 },\n    },", "reload: { mode: 'hybrid', debounceMs: 300 },\n    },\n    discovery: { mdns: { mode: 'off' } },\n    hooks: { enabled: false },");
+  code = code.replace("botToken: '${TELEGRAM_BOT_TOKEN}',\n        dmPolicy:", "botToken: '${TELEGRAM_BOT_TOKEN}',\n        streaming: { mode: 'off', chunkMode: 'length', preview: { chunk: false }, block: { enabled: false, coalesce: false } },\n        dmPolicy:");
+  code = code.replace("const child = spawn('node', ['openclaw.mjs', 'gateway', '--port', String(gatewayPort), '--verbose'],", "const child = spawn('node', ['openclaw.mjs', 'gateway', '--port', String(process.env.PORT || gatewayPort), '--verbose'],");
   fs.writeFileSync(patched, code);
   await import(pathToFileURL(patched).href);
 }
