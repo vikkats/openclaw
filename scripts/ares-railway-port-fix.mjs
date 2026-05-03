@@ -174,8 +174,8 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
   function applyRuntimeModelConfig(cfg) {
     const textProviderId = optionalEnv('TEXT_PROVIDER_ID', optionalEnv('OPENCLAW_TEXT_PROVIDER_ID', 'openrouter'));
     const modelId = optionalEnv('TEXT_MODEL', optionalEnv('OPENROUTER_MODEL', optionalEnv('NANO_GPT_MODEL', 'owl-alpha')));
-    const imageProviderId = optionalEnv('IMAGE_PROVIDER_ID', optionalEnv('OPENCLAW_IMAGE_PROVIDER_ID', optionalEnv('NANO_GPT_PROVIDER_ID', 'nanogpt')));
-    const imageModelId = optionalEnv('IMAGE_MODEL', optionalEnv('NANO_GPT_IMAGE_MODEL', 'qwen2.5-vl-72b-instruct'));
+    const imageProviderId = optionalEnv('IMAGE_PROVIDER_ID', optionalEnv('OPENCLAW_IMAGE_PROVIDER_ID', 'openrouter'));
+    const imageModelId = optionalEnv('IMAGE_MODEL', optionalEnv('NANO_GPT_IMAGE_MODEL', 'qwen/qwen2.5-vl-72b-instruct'));
     const nanoGptExtraModelIds = splitCsv(optionalEnv('NANO_GPT_EXTRA_MODELS', optionalEnv('NANO_GPT_THINKING_MODEL', 'qwen/qwen3.5-397b-a17b-thinking')));
     const modelRef = `${textProviderId}/${modelId}`;
     const imageModelRef = `${imageProviderId}/${imageModelId}`;
