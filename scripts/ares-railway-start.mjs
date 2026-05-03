@@ -57,6 +57,11 @@ function commandExists(command) {
   return result.status === 0 && result.stdout.trim() !== '';
 }
 
+function commandPath(command) {
+  const result = run('sh', ['-lc', `command -v ${command}`]);
+  return result.status === 0 ? result.stdout.trim() : '';
+}
+
 function prependPath(dir) {
   if (!dir) return;
   const parts = String(process.env.PATH || '').split(':').filter(Boolean);
@@ -83,7 +88,7 @@ function ensureOpenClawCli() {
       console.log('[ares-railway] openclaw CLI missing; installing openclaw@latest globally');
       const install = run('npm', ['install', '-g', 'openclaw@latest'], { stdio: 'inherit' });
       if (install.status !== 0) {
-        console.warn(`[ares-railway] openclaw CLI install failed with status ${install.status}; gateway will still start`);
+        console.warn(`[ares-railway] openclaw CLI install failed with status ${install.status}; gateway may fall back to bundled runtime`);
       }
     } else {
       console.warn('[ares-railway] openclaw CLI missing and ARES_INSTALL_OPENCLAW_CLI=false');
@@ -91,9 +96,9 @@ function ensureOpenClawCli() {
   }
 
   if (commandExists('openclaw')) {
-    const which = run('sh', ['-lc', 'command -v openclaw']);
+    const which = commandPath('openclaw');
     const version = run('openclaw', ['--version']);
-    console.log(`[ares-railway] openclaw CLI path: ${which.stdout.trim()}`);
+    console.log(`[ares-railway] openclaw CLI path: ${which}`);
     console.log(`[ares-railway] openclaw CLI version: ${(version.stdout || version.stderr || '').trim()}`);
   } else {
     console.warn('[ares-railway] openclaw CLI still unavailable; native ClawHub/config/plugin commands may not work from agent sessions');
@@ -228,6 +233,12 @@ try {
 
 ensureOpenClawCli();
 
+const useGlobalGateway = boolEnv('ARES_USE_GLOBAL_OPENCLAW_GATEWAY', true) && commandExists('openclaw');
+const childCommand = useGlobalGateway ? 'openclaw' : 'node';
+const childArgs = useGlobalGateway
+  ? ['gateway', '--port', String(gatewayPort), '--verbose']
+  : ['openclaw.mjs', 'gateway', '--port', String(gatewayPort), '--verbose'];
+
 console.log('[ares-railway] starting gateway', {
   configPath,
   workspace,
@@ -235,9 +246,11 @@ console.log('[ares-railway] starting gateway', {
   gatewayPort,
   model: optionalEnv('NANO_GPT_MODEL', 'kimi-k2.5'),
   qdrantUrl: optionalEnv('QDRANT_URL', 'unset'),
+  runtime: useGlobalGateway ? 'global-openclaw-cli' : 'bundled-repo-openclaw.mjs',
+  command: `${childCommand} ${childArgs.join(' ')}`,
 });
 
-const child = spawn('node', ['openclaw.mjs', 'gateway', '--port', String(gatewayPort), '--verbose'], {
+const child = spawn(childCommand, childArgs, {
   stdio: 'inherit',
   env: {
     ...process.env,
