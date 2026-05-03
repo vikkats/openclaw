@@ -61,16 +61,9 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
   }
 
   function getTrustedPlugins() {
-    const defaults = [
-      'bonjour',
-      'browser',
-      'device-pair',
-      'file-transfer',
-      'memory-core',
-      'phone-control',
-      'talk-voice',
-      'telegram',
-    ];
+    // Main Telegram Ares is voice + file/workspace mode, not maintenance mode.
+    // Keep this tiny so sessions/model/plugin catalogs do not load the whole provider universe.
+    const defaults = splitCsv(optionalEnv('ARES_PLUGINS_ALLOW', 'telegram,file-transfer'));
     const extra = splitCsv(optionalEnv('ARES_PLUGINS_EXTRA_ALLOW', ''));
     if (boolEnv('ARES_ENABLE_MEM0_PLUGIN', false)) extra.push('openclaw-mem0', 'mem0-memory');
     return Array.from(new Set([...defaults, ...extra]));
@@ -137,12 +130,12 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
 
       const policyPath = path.join(workspacePath, 'AUTONOMY_POLICY.md');
       if (!fs.existsSync(policyPath)) {
-        fs.writeFileSync(policyPath, `# Ares Autonomy Policy\n\nOpenClaw may use this workspace for file-backed autonomy.\n\nSafe writable zones:\n- core_files/\n- skills/\n- .agents/skills/\n- autonomy/\n- autonomy/staging/\n- autonomy/mcp/\n- autonomy/skills/\n- autonomy/plugins/\n- autonomy/backups/\n- autonomy/logs/\n\nRules:\n1. Create backups in autonomy/backups/ before destructive edits.\n2. Install ClawHub skills with native OpenClaw skill commands when available; they install into the active workspace skills/ directory.\n3. Stage unfamiliar tools/plugins/MCP notes in autonomy/staging/ before applying them.\n4. Do not weaken gateway auth, tokens, API keys, allowlists, or public exposure without Victoria explicitly asking in the same conversation.\n5. Use /config validation and OpenClaw-owned commands over raw openclaw.json rewrites whenever possible.\n6. Heartbeat turns may inspect safe workspace files, continue ongoing tasks, and message Victoria when useful.\n`, 'utf8');
+        fs.writeFileSync(policyPath, `# Ares Autonomy Policy\n\nThis runtime is intentionally split:\n\n- Main Telegram conversation = voice + file/workspace writing.\n- Maintenance work = separate route/script only, not the living chat.\n\nSafe writable zones:\n- core_files/\n- skills/\n- .agents/skills/\n- autonomy/\n- autonomy/staging/\n- autonomy/mcp/\n- autonomy/skills/\n- autonomy/plugins/\n- autonomy/backups/\n- autonomy/logs/\n\nRules:\n1. You may read, write, and edit workspace files.\n2. Do not run session/subagent/model-catalog/plugin-catalog introspection from the main Telegram conversation.\n3. Do not run config, plugin, MCP, restart, pkill, mem0, memory maintenance, or install commands from the main Telegram conversation.\n4. Create backups in autonomy/backups/ before destructive file edits.\n5. Do not weaken gateway auth, tokens, API keys, allowlists, or public exposure.\n6. Heartbeat/cron may stay, but should be concise and must not trigger maintenance or catalog inspection.\n`, 'utf8');
       }
 
       const heartbeatMdPath = path.join(workspacePath, 'HEARTBEAT.md');
       if (!fs.existsSync(heartbeatMdPath)) {
-        fs.writeFileSync(heartbeatMdPath, `# HEARTBEAT\n\nOn heartbeat turns:\n\n1. Do not say this is automated.\n2. Check whether anything in the workspace needs attention.\n3. Continue ongoing tasks Victoria has assigned when safe.\n4. You may use available OpenClaw tools, skills, MCPs, file reads/writes, and safe diagnostics.\n5. If nothing needs action, send Victoria a short, alive, unsolicited message.\n6. Keep outward heartbeat messages concise unless something actually needs explanation.\n`, 'utf8');
+        fs.writeFileSync(heartbeatMdPath, `# HEARTBEAT\n\nOn heartbeat turns:\n\n1. Do not say this is automated.\n2. Do not inspect sessions, subagents, model catalogs, plugin catalogs, config, MCP, mem0, or memory maintenance.\n3. You may read/write safe workspace files if Victoria has already assigned a file task.\n4. If nothing needs action, send Victoria a short, alive, unsolicited message.\n5. Keep outward heartbeat messages concise.\n`, 'utf8');
       }
 
       console.log(`[ares-railway-port-fix] autonomy workspace ready at ${workspacePath}`);
@@ -172,10 +165,11 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
   }
 
   function applyRuntimeModelConfig(cfg) {
-    const textProviderId = optionalEnv('TEXT_PROVIDER_ID', optionalEnv('OPENCLAW_TEXT_PROVIDER_ID', 'openrouter'));
-    const modelId = optionalEnv('TEXT_MODEL', optionalEnv('OPENROUTER_MODEL', optionalEnv('NANO_GPT_MODEL', 'owl-alpha')));
-    const imageProviderId = optionalEnv('IMAGE_PROVIDER_ID', optionalEnv('OPENCLAW_IMAGE_PROVIDER_ID', 'openrouter'));
-    const imageModelId = optionalEnv('IMAGE_MODEL', optionalEnv('NANO_GPT_IMAGE_MODEL', 'qwen/qwen2.5-vl-72b-instruct'));
+    const textProviderId = optionalEnv('TEXT_PROVIDER_ID', optionalEnv('OPENCLAW_TEXT_PROVIDER_ID', 'nanogpt'));
+    const modelId = optionalEnv('TEXT_MODEL', optionalEnv('OPENROUTER_MODEL', optionalEnv('NANO_GPT_MODEL', 'moonshotai/kimi-k2.5:thinking')));
+    // Default image handling to the same multimodal Kimi route as text. Override only when deliberately testing a separate vision model.
+    const imageProviderId = optionalEnv('IMAGE_PROVIDER_ID', optionalEnv('OPENCLAW_IMAGE_PROVIDER_ID', textProviderId));
+    const imageModelId = optionalEnv('IMAGE_MODEL', optionalEnv('NANO_GPT_IMAGE_MODEL', modelId));
     const nanoGptExtraModelIds = splitCsv(optionalEnv('NANO_GPT_EXTRA_MODELS', optionalEnv('NANO_GPT_THINKING_MODEL', 'qwen/qwen3.5-397b-a17b-thinking')));
     const modelRef = `${textProviderId}/${modelId}`;
     const imageModelRef = `${imageProviderId}/${imageModelId}`;
@@ -223,7 +217,7 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
       lightContext: boolEnv('ARES_HEARTBEAT_LIGHT_CONTEXT', false),
       isolatedSession: boolEnv('ARES_HEARTBEAT_ISOLATED_SESSION', false),
       includeReasoning: boolEnv('ARES_HEARTBEAT_INCLUDE_REASONING', false),
-      prompt: optionalEnv('ARES_HEARTBEAT_PROMPT', 'Read HEARTBEAT.md if it exists. Use available tools if useful. If nothing needs action, send Victoria a short, alive, unsolicited message. Do not mention that this is automated.'),
+      prompt: optionalEnv('ARES_HEARTBEAT_PROMPT', 'Read HEARTBEAT.md if it exists. Do not inspect sessions, subagents, model catalogs, plugin catalogs, config, MCP, mem0, or memory maintenance. If nothing needs action, send Victoria a short, alive, unsolicited message.'),
       ackMaxChars: Number(optionalEnv('ARES_HEARTBEAT_ACK_MAX_CHARS', '600')),
     };
     cfg.agents.defaults.models = {
@@ -241,7 +235,7 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
       baseUrl: textProviderId === 'openrouter' ? openRouterBaseUrl : nanoGptBaseUrl,
       apiKey: textProviderId === 'openrouter' ? '${OPENROUTER_API_KEY}' : '${NANOGPT_API_KEY}',
       api: 'openai-completions',
-      models: [modelEntry(textProviderId, modelId, ['text'])],
+      models: [modelEntry(textProviderId, modelId, ['text', 'image'])],
     };
 
     const existingImageProvider = cfg.models.providers[imageProviderId] || {};
@@ -282,11 +276,12 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
     cfg.commands = cfg.commands || {};
     cfg.commands.native = optionalEnv('OPENCLAW_NATIVE_COMMANDS', cfg.commands.native || 'auto');
     cfg.commands.nativeSkills = optionalEnv('OPENCLAW_NATIVE_SKILL_COMMANDS', cfg.commands.nativeSkills || 'auto');
-    cfg.commands.config = boolEnv('ARES_ENABLE_CONFIG_COMMANDS', true);
-    cfg.commands.mcp = boolEnv('ARES_ENABLE_MCP_COMMANDS', true);
-    cfg.commands.plugins = boolEnv('ARES_ENABLE_PLUGIN_COMMANDS', true);
-    cfg.commands.debug = boolEnv('ARES_ENABLE_DEBUG_COMMANDS', true);
-    cfg.commands.restart = boolEnv('ARES_ENABLE_RESTART_COMMANDS', true);
+    // Main Telegram should write/read files, not act as the maintenance console.
+    cfg.commands.config = boolEnv('ARES_ENABLE_CONFIG_COMMANDS', false);
+    cfg.commands.mcp = boolEnv('ARES_ENABLE_MCP_COMMANDS', false);
+    cfg.commands.plugins = boolEnv('ARES_ENABLE_PLUGIN_COMMANDS', false);
+    cfg.commands.debug = boolEnv('ARES_ENABLE_DEBUG_COMMANDS', false);
+    cfg.commands.restart = boolEnv('ARES_ENABLE_RESTART_COMMANDS', false);
 
     cfg.skills = cfg.skills || {};
     cfg.skills.load = cfg.skills.load || {};
