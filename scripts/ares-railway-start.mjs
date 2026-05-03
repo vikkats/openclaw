@@ -105,6 +105,61 @@ function ensureOpenClawCli() {
   }
 }
 
+function normalizePersistedConfigForCurrentOpenClaw() {
+  try {
+    if (!fs.existsSync(configPath)) return;
+    const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    let changed = false;
+
+    if (cfg.gateway && 'host' in cfg.gateway) {
+      delete cfg.gateway.host;
+      changed = true;
+      console.log('[ares-railway] migrated config: removed gateway.host');
+    }
+    if (cfg.gateway && !('mode' in cfg.gateway)) {
+      cfg.gateway.mode = 'local';
+      changed = true;
+      console.log('[ares-railway] migrated config: added gateway.mode=local');
+    }
+
+    if (cfg.channels?.telegram) {
+      const staleTelegramKeys = [
+        'streamMode',
+        'chunkMode',
+        'blockStreaming',
+        'blockStreamingCoalesce',
+        'draftChunk',
+        'replyToMode',
+        'linkPreview',
+        'textChunkLimit',
+        'accounts',
+      ];
+      for (const key of staleTelegramKeys) {
+        if (Object.prototype.hasOwnProperty.call(cfg.channels.telegram, key)) {
+          delete cfg.channels.telegram[key];
+          changed = true;
+        }
+      }
+      const desiredStreaming = { mode: 'off' };
+      if (JSON.stringify(cfg.channels.telegram.streaming) !== JSON.stringify(desiredStreaming)) {
+        cfg.channels.telegram.streaming = desiredStreaming;
+        changed = true;
+        console.log('[ares-railway] migrated config: normalized channels.telegram.streaming={mode:"off"}');
+      }
+    }
+
+    if (cfg.browser?.ssrfPolicy && Object.prototype.hasOwnProperty.call(cfg.browser.ssrfPolicy, 'allowPrivateNetwork')) {
+      delete cfg.browser.ssrfPolicy.allowPrivateNetwork;
+      changed = true;
+      console.log('[ares-railway] migrated config: removed browser.ssrfPolicy.allowPrivateNetwork');
+    }
+
+    if (changed) fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2));
+  } catch (e) {
+    console.error('[ares-railway] config normalization failed:', e.message);
+  }
+}
+
 ensureDir(home);
 ensureDir(workspace);
 ensureDir(path.join(workspace, 'core_files'));
@@ -209,29 +264,9 @@ if (!fs.existsSync(configPath)) {
   console.log(`[ares-railway] using existing config: ${configPath}`);
 }
 
-// Migrate: remove unrecognized gateway.host key and ensure gateway.mode exists
-try {
-  const raw = fs.readFileSync(configPath, 'utf8');
-  const cfg = JSON.parse(raw);
-  let changed = false;
-  if (cfg.gateway && 'host' in cfg.gateway) {
-    delete cfg.gateway.host;
-    changed = true;
-    console.log('[ares-railway] migrated config: removed gateway.host');
-  }
-  if (cfg.gateway && !('mode' in cfg.gateway)) {
-    cfg.gateway.mode = 'local';
-    changed = true;
-    console.log('[ares-railway] migrated config: added gateway.mode=local');
-  }
-  if (changed) {
-    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2));
-  }
-} catch (e) {
-  console.error('[ares-railway] config migration failed:', e.message);
-}
-
+normalizePersistedConfigForCurrentOpenClaw();
 ensureOpenClawCli();
+normalizePersistedConfigForCurrentOpenClaw();
 
 const useGlobalGateway = boolEnv('ARES_USE_GLOBAL_OPENCLAW_GATEWAY', true) && commandExists('openclaw');
 const childCommand = useGlobalGateway ? 'openclaw' : 'node';
