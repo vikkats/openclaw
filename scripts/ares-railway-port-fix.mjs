@@ -60,6 +60,22 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
     for (const key of keys) delete obj[key];
   }
 
+  function getTrustedPlugins() {
+    const defaults = [
+      'bonjour',
+      'browser',
+      'device-pair',
+      'file-transfer',
+      'memory-core',
+      'phone-control',
+      'talk-voice',
+      'telegram',
+    ];
+    const extra = splitCsv(optionalEnv('ARES_PLUGINS_EXTRA_ALLOW', ''));
+    if (boolEnv('ARES_ENABLE_MEM0_PLUGIN', false)) extra.push('openclaw-mem0', 'mem0-memory');
+    return Array.from(new Set([...defaults, ...extra]));
+  }
+
   function sanitizeUnsupportedRuntimeKeys(cfg) {
     const staleModelKeys = [
       'temperature',
@@ -79,6 +95,7 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
       'draftChunk',
       'replyToMode',
       'linkPreview',
+      'textChunkLimit',
       'accounts',
     ];
 
@@ -87,9 +104,7 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
     if (cfg?.browser?.ssrfPolicy) delete cfg.browser.ssrfPolicy.allowPrivateNetwork;
     if (cfg?.channels?.telegram) {
       for (const key of staleTelegramKeys) delete cfg.channels.telegram[key];
-      if (typeof cfg.channels.telegram.streaming !== 'object' || cfg.channels.telegram.streaming === null) {
-        delete cfg.channels.telegram.streaming;
-      }
+      cfg.channels.telegram.streaming = { mode: 'off' };
     }
 
     const providers = cfg?.models?.providers || {};
@@ -293,12 +308,20 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
     return cfg;
   }
 
+  function applyTrustedPluginAllowlist(cfg) {
+    cfg.plugins = cfg.plugins || {};
+    cfg.plugins.allow = getTrustedPlugins();
+    console.log(`[ares-railway-port-fix] plugins.allow=${cfg.plugins.allow.join(',')}`);
+    return cfg;
+  }
+
   function secureConfig(cfg) {
     assertStrongGatewayToken();
     cfg = sanitizeUnsupportedRuntimeKeys(cfg);
     cfg = applyRuntimeEnvConfig(cfg);
     cfg = applyRuntimeModelConfig(cfg);
     cfg = applyAutonomyCommandConfig(cfg);
+    cfg = applyTrustedPluginAllowlist(cfg);
     cfg.gateway = cfg.gateway || {};
     if (Object.prototype.hasOwnProperty.call(cfg.gateway, 'host')) delete cfg.gateway.host;
     cfg.gateway.mode = 'local';
@@ -318,14 +341,7 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
       cfg.channels.telegram.configWrites = telegramConfigWrites;
       cfg.channels.telegram.dmPolicy = process.env.TELEGRAM_DM_POLICY || cfg.channels.telegram.dmPolicy || 'allowlist';
       cfg.channels.telegram.groupPolicy = cfg.channels.telegram.groupPolicy || 'allowlist';
-      cfg.channels.telegram.streaming = {
-        ...(typeof cfg.channels.telegram.streaming === 'object' && cfg.channels.telegram.streaming ? cfg.channels.telegram.streaming : {}),
-        mode: 'off',
-        chunkMode: 'length',
-        preview: { ...(cfg.channels.telegram.streaming?.preview || {}), chunk: false },
-        block: { ...(cfg.channels.telegram.streaming?.block || {}), enabled: false, coalesce: false },
-      };
-      cfg.channels.telegram.textChunkLimit = Number(process.env.TELEGRAM_TEXT_CHUNK_LIMIT || 4000);
+      cfg.channels.telegram.streaming = { mode: 'off' };
       cfg.channels.telegram.retry = {
         ...(cfg.channels.telegram.retry || {}),
         attempts: Number(process.env.TELEGRAM_RETRY_ATTEMPTS || 2),
@@ -358,7 +374,7 @@ if (process.env.ARES_UPLOAD_MODE === '1') {
   code = code.replace("const gatewayPort = Number(process.env.OPENCLAW_GATEWAY_PORT || process.env.PORT || 18789);", "const gatewayPort = Number(process.env.PORT || process.env.OPENCLAW_GATEWAY_PORT || 18789);");
   code = code.replace("port: gatewayPort,\n      auth:", "port: gatewayPort,\n      bind: 'lan',\n      auth:");
   code = code.replace("reload: { mode: 'hybrid', debounceMs: 300 },\n    },", "reload: { mode: 'hybrid', debounceMs: 300 },\n    },\n    discovery: { mdns: { mode: 'off' } },\n    hooks: { enabled: false },");
-  code = code.replace("botToken: '${TELEGRAM_BOT_TOKEN}',\n        dmPolicy:", "botToken: '${TELEGRAM_BOT_TOKEN}',\n        streaming: { mode: 'off', chunkMode: 'length', preview: { chunk: false }, block: { enabled: false, coalesce: false } },\n        dmPolicy:");
+  code = code.replace("botToken: '${TELEGRAM_BOT_TOKEN}',\n        dmPolicy:", "botToken: '${TELEGRAM_BOT_TOKEN}',\n        streaming: { mode: 'off' },\n        dmPolicy:");
   code = code.replace("const child = spawn('node', ['openclaw.mjs', 'gateway', '--port', String(gatewayPort), '--verbose'],", "const child = spawn('node', ['openclaw.mjs', 'gateway', '--port', String(process.env.PORT || gatewayPort), '--verbose'],");
   fs.writeFileSync(patched, code);
   await import(pathToFileURL(patched).href);
